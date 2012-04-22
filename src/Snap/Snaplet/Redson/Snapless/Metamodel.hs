@@ -30,7 +30,7 @@ type FieldValue = B.ByteString
 type FieldIndex = (FieldName, Bool)
 
 
--- | List of field key-value pairs.
+-- | List of field key-value pairs, or contents of model isntance.
 --
 -- Suitable for using with 'Database.Redis.hmset'.
 type Commit = M.Map FieldName FieldValue
@@ -184,6 +184,7 @@ instance FromJSON Application where
     parseJSON _          = error "Could not parse application entry"
 
 
+-- | A named group of fields.
 type Groups = M.Map B.ByteString [Field]
 
 
@@ -197,26 +198,19 @@ groupFieldName :: FieldName
 groupFieldName parent field = B.concat [parent, "_", field]
 
 
--- | Replace all model fields having `group` type with actual group
--- fields.
+-- | Replace all model fields having `groupName` annotation with
+-- actual group fields.
 spliceGroups :: Groups -> Model -> Model
 spliceGroups groups model =
     let
-        origFields = fields model
+        updateNames f = fromMaybe [f] $ do
+            n <- groupName f
+            grp <- M.lookup n groups
+            return $ map (\gf -> gf{ groupName = Just n
+                                   , name = groupFieldName (name f) (name gf)
+                                   }) grp
     in
-      model{fields = concat $
-            map (\f -> 
-                 case groupName f of
-                   Just n -> 
-                       case (M.lookup n groups) of
-                         Just grp -> 
-                             map (\gf -> gf{ groupName = Just n
-                                           , name = groupFieldName (name f) (name gf)
-                                           }) grp
-                         Nothing -> [f]
-                   _ -> [f]
-                ) origFields}
-
+        model{fields = concatMap updateNames $ fields model}
 
 -- | Perform all applications in model.
 doApplications :: Model -> Model

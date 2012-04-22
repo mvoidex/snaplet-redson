@@ -2,14 +2,17 @@
 
 * Overview
   This snaplet provides create-read-update-delete operations for any
-  JSON objects with Redis storage. Role-based permissions system is
-  supported.
+  JSON objects with Redis storage. JSON objects are mapped to Redis
+  hashes. Role-based permissions system is supported.
 
   Primary notion of Redson is a model, or form, which is a named
   collection of fields with certain extra annotations. Every filled
   form («instance of model») has unique ID when stored in Redis.
 
-  Models must be defined prior to usage with special syntax.
+  Models must be defined prior to usage with special syntax, which may
+  also be requested by client code to build interface for models
+  (using JavaScript templating, for example).
+  
   Transparent mode is supported in which model definitions are not
   checked, but permissions engine is unavailable as well. Certain
   transformations may be applied to model definition by server and
@@ -65,7 +68,7 @@
 **** name
 
      Field object must include `name` key which is the internal name of
-     the field.
+     the field. Name is alphanumeric string.
 
      `class` cannot be used as a field name.
 

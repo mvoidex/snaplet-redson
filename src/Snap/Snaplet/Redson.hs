@@ -17,6 +17,7 @@ module Snap.Snaplet.Redson
 
 where
 
+import qualified Prelude (id)
 import Prelude hiding (concat, FilePath, id)
 
 import Control.Monad.State hiding (put)
@@ -24,11 +25,8 @@ import Data.Functor
 
 import Data.Aeson as A
 
-import Data.Char (isDigit)
-
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB (ByteString)
-import qualified Data.ByteString.UTF8 as BU (toString)
 
 import Data.Configurator
 
@@ -108,7 +106,9 @@ withAuth :: (MonadState (Redson b1) (m b1 v), MonadSnaplet m) =>
             m b1 (AuthManager b1) b -> m b1 v b
 withAuth action = do
   am <- gets auth
-  return =<< withTop am action
+  withTop am action
+-- Pointfree is more concise but less readable
+-- withAuth = (gets auth >>=) . flip withTop
 
 
 ------------------------------------------------------------------------------
@@ -175,7 +175,7 @@ deletionMessage = modelMessage "delete"
 ------------------------------------------------------------------------------
 -- | Encode Redis HGETALL reply to B.ByteString with JSON.
 commitToJson :: Commit -> LB.ByteString
-commitToJson r = A.encode r
+commitToJson = A.encode
 
 
 ------------------------------------------------------------------------------
@@ -188,16 +188,9 @@ commitToJson r = A.encode r
 -- fail.
 jsonToCommit :: LB.ByteString -> Maybe Commit
 jsonToCommit s =
-    let
-        j = A.decode s
-    in
-      case j of
-        Nothing -> Nothing
-        Just m ->
-             -- Omit fields with null values and "id" key
-            Just (M.filterWithKey 
-                       (\k _ -> k /= "id")
-                       m)
+    -- Omit fields with null values and "id" key
+    M.filterWithKey (const (/= "id"))
+    <$> A.decode s
 
 
 ------------------------------------------------------------------------------
@@ -227,10 +220,9 @@ post = ifTop $ do
         -- the response SHOULD be 201 (Created) and contain an entity which
         -- describes the status of the request and refers to the new
         -- resource
-        modifyResponse $ (setContentType "application/json" . setResponseCode 201)
+        modifyResponse $ setContentType "application/json" . setResponseCode 201
         -- Tell client new instance id in response JSON.
         writeLBS $ A.encode $ M.insert "id" newId commit
-        return ()
 
 
 ------------------------------------------------------------------------------
@@ -247,8 +239,7 @@ read' = ifTop $ do
          handleError notFound
 
     modifyResponse $ setContentType "application/json"
-    writeLBS $ commitToJson $ (filterUnreadable au mdl (M.fromList r))
-    return ()
+    writeLBS $ commitToJson $ filterUnreadable au mdl (M.fromList r)
 
 
 ------------------------------------------------------------------------------
@@ -272,7 +263,6 @@ put = ifTop $ do
         Right _ <- runRedisDB database $ 
            CRUD.update mname id j (maybe [] indices mdl)
         modifyResponse $ setResponseCode 204
-        return ()
 
 
 ------------------------------------------------------------------------------
@@ -370,8 +360,8 @@ listModels = ifTop $ do
         Nothing -> handleError unauthorized >> return []
         -- Leave only readable models.
         Just user ->
-            gets (filter (\(_, m) -> elem GET $
-                                     getModelPermissions (Right user) m)
+            gets (filter (elem GET
+                          . getModelPermissions (Right user) . snd)
                   . M.toList . models)
   modifyResponse $ setContentType "application/json"
   writeLBS (A.encode $ 
@@ -411,42 +401,29 @@ search =
               -- TODO: Mark these field names as reserved
               mType <- getParam "_matchType"
               sType <- getParam "_searchType"
-              iLimit <- getParam "_limit"
-              outFields <- (\p -> maybe [] (B.split comma) p) <$>
+              outFields <- maybe [] (B.split comma) <$>
                            getParam "_fields"
 
-              patFunction <- return $ case mType of
+              let patFunction = case mType of
                                Just "p"  -> prefixMatch
                                Just "s"  -> substringMatch
                                _         -> prefixMatch
 
-              searchType  <- return $ case sType of
+              let searchType  = case sType of
                                Just "and" -> intersectAll
                                Just "or"  -> unionAll
                                _          -> intersectAll
 
-              itemLimit   <- return $ case iLimit of
-                               Just b -> let
-                                            s = BU.toString b
-                                         in
-                                           if (all isDigit s) then (read s)
-                                           else defaultSearchLimit
-                               _      -> defaultSearchLimit
+              itemLimit   <- fromIntParam "_limit" defaultSearchLimit
 
+              query       <- fromMaybe "" <$> getParam "q"
               -- Produce Just SearchTerm
-              indexValues <- mapM (\(i, c) -> do
-                                     p <- getParam i
-                                     case p of
-                                       Nothing -> return Nothing
-                                       Just s -> if c then return $
-                                                  Just (i, CRUD.collate s)
-                                                 else return $
-                                                  Just (i, s))
-                             (indices m)
+              let collate c = if c then CRUD.collate else Prelude.id
+              let indexValues = map (mapSnd (`collate` query)) $ indices m
 
               -- For every term, get list of ids which match it
               termIds <- runRedisDB database $
-                         redisSearch m (catMaybes indexValues) patFunction
+                         redisSearch m indexValues patFunction
 
               modifyResponse $ setContentType "application/json"
               case (filter (not . null) termIds) of
@@ -463,9 +440,11 @@ search =
                       case outFields of
                         [] -> writeLBS $ A.encode instances
                         _ -> writeLBS $ A.encode $
-                             map (flip CRUD.onlyFields outFields) instances
-              return ()
+                             map (`CRUD.onlyFields` outFields) instances
 
+
+mapSnd :: (b -> c) -> (a, b) -> (a, c)
+mapSnd f (a, b) = (a, f b)
 
 -----------------------------------------------------------------------------
 -- | CRUD routes for models.
@@ -483,7 +462,18 @@ routes = [ (":model/timeline", method GET timeline)
 
 
 ------------------------------------------------------------------------------
--- | Connect to Redis and set routes.
+-- | Initialize Redson. AuthManager from parent snaplet is required.
+--
+-- Connect to Redis, read configuration and set routes.
+--
+-- > appInit :: SnapletInit MyApp MyApp
+-- > appInit = makeSnaplet "app" "App with Redson" Nothing $
+-- >           do
+-- >             r <- nestSnaplet "_" redson $ redsonInit auth
+-- >             s <- nestSnaplet "session" session $ initCookieSessionManager
+-- >                                                  sesKey "_session" sessionTimeout
+-- >             a <- nestSnaplet "auth" auth $ initJsonFileAuthManager defAuthSettings
+-- >             return $ MyApp r s a
 redsonInit :: Lens b (Snaplet (AuthManager b))
            -> SnapletInit b (Redson b)
 redsonInit topAuth = makeSnaplet
