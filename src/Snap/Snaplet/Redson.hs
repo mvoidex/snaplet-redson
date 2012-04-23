@@ -20,7 +20,9 @@ where
 import qualified Prelude (id)
 import Prelude hiding (concat, FilePath, id)
 
+import Control.Arrow (second)
 import Control.Monad.State hiding (put)
+import Control.Concurrent.MVar
 import Data.Functor
 
 import Data.Aeson as A
@@ -57,6 +59,7 @@ import Snap.Snaplet.Redson.Permissions
 import Snap.Snaplet.Redson.Search
 import Snap.Snaplet.Redson.Util
 
+import qualified Text.Search.NGram as NGram
 
 ------------------------------------------------------------------------------
 -- | Redson snaplet state type.
@@ -67,6 +70,7 @@ data Redson b = Redson
              , models :: M.Map ModelName Model
              , transparent :: Bool
              -- ^ Operate in transparent mode (not security checks).
+             , indexSearch :: MVar (NGram.Index CRUD.InstanceId)
              }
 
 makeLens ''Redson
@@ -417,12 +421,18 @@ search =
               itemLimit   <- fromIntParam "_limit" defaultSearchLimit
 
               query       <- fromMaybe "" <$> getParam "q"
+
+              isVar <- gets indexSearch
+              termIds <- runRedisDB database $ do
+                  redisIndex isVar mname (map fst $ indices m)
+                  redisSearch' isVar query
+
               -- Produce Just SearchTerm
               let collate c = if c then CRUD.collate else Prelude.id
-              let indexValues = map (mapSnd (`collate` query)) $ indices m
+              let indexValues = map (second (`collate` query)) $ indices m
 
               -- For every term, get list of ids which match it
-              termIds <- runRedisDB database $
+              termIds' <- runRedisDB database $
                          redisSearch m indexValues patFunction
 
               modifyResponse $ setContentType "application/json"
@@ -441,10 +451,6 @@ search =
                         [] -> writeLBS $ A.encode instances
                         _ -> writeLBS $ A.encode $
                              map (`CRUD.onlyFields` outFields) instances
-
-
-mapSnd :: (b -> c) -> (a, b) -> (a, c)
-mapSnd f (a, b) = (a, f b)
 
 -----------------------------------------------------------------------------
 -- | CRUD routes for models.
@@ -498,5 +504,6 @@ redsonInit topAuth = makeSnaplet
                                     cfg "field-groups-file"
 
             mdls <- liftIO $ loadModels mdlDir grpDef
+            ngram <- liftIO $ newEmptyMVar
             addRoutes routes
-            return $ Redson r topAuth p mdls transp
+            return $ Redson r topAuth p mdls transp ngram
