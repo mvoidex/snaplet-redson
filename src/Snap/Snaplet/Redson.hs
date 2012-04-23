@@ -72,7 +72,7 @@ data Redson b = Redson
              , models :: M.Map ModelName Model
              , transparent :: Bool
              -- ^ Operate in transparent mode (not security checks).
-             , indexSearch :: MVar (NG.Index CRUD.InstanceId)
+             , indexSearch :: MVar (NGram.Index CRUD.InstanceId)
              , indexCreated :: MVar Bool
              }
 

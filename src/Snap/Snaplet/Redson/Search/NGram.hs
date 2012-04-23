@@ -1,11 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Snap.Snaplet.Redson.Search.NGram
-    ( create
+    ( Index
+    , searched
+    , create
     , update
     , delete
     , getRecord
     , modifyIndex
+    , initializeIndex
     ) where
 
 import Control.Arrow
@@ -16,6 +19,7 @@ import Control.Concurrent.MVar
 
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromJust)
+import Data.Monoid
 
 import qualified Data.ByteString as B
 
@@ -42,13 +46,40 @@ record :: [FieldIndex] -> Commit -> NG.IndexValue
 record fs c = concatMap (NG.ngram 3) values where
     values = map decodeS $ mapMaybe (`M.lookup` c) (map fst fs)
 
+-- | Index data
+data Index a = Uninitialized (NG.IndexAction a) | Initialized (NG.Index a)
+
+instance Ord a => Monoid (Index a) where
+    mempty = Uninitialized mempty
+    (Uninitialized l) `mappend` (Uninitialized r) = Uninitialized (l `mappend` r)
+    (Uninitialized l) `mappend` (Initialized r) =
+        Uninitialized $ l `mappend` NG.insertAction r
+    (Initialized l) `mappend` (Uninitialized r) =
+        Uninitialized $ NG.insertAction l `mappend` r
+    (Initialized l) `mappend` (Initialized r) = Initialized (l `mappend` r)
+
+-- | Apply index action
+apply :: Ord a => NG.IndexAction a -> Index a -> Index a
+apply act (Uninitialized v) = Uninitialized (v `mappend` act)
+apply act (Initialized v) = Initialized $ NG.apply act v
+
+-- | Initialize index
+initialize :: Ord a => NG.Index a -> Index a -> Index a
+initialize i (Uninitialized v) = Initialized $ NG.apply v i
+initialize i (Initialized v) = Initialized $ v `mappend` i
+
+-- | Search subpart
+searched :: Ord a => Index a -> NG.Index a
+searched (Uninitialized v) = NG.apply v mempty
+searched (Initialized v) = v
+
 -- | Create index for new record and update indices with it
 create
     :: InstanceId
     -> [FieldIndex]
     -> Commit
-    -> (NG.Index InstanceId -> NG.Index InstanceId)
-create i fs c = NG.apply (NG.insert (record fs) c i)
+    -> NG.IndexAction InstanceId
+create i fs c = NG.insert (record fs) c i
 
 -- | Update existing record
 update
@@ -56,8 +87,8 @@ update
     -> [FieldIndex]
     -> Commit
     -> Commit
-    -> (NG.Index InstanceId -> NG.Index InstanceId)
-update i fs c c' = NG.apply (NG.update (record fs) v c' i) where
+    -> NG.IndexAction InstanceId
+update i fs c c' = NG.update (record fs) v c' i where
     v = M.intersectionWith const c c' -- remove only overlapped keys
 
 -- | Remove record
@@ -65,8 +96,8 @@ delete
     :: InstanceId
     -> [FieldIndex]
     -> Commit
-    -> (NG.Index InstanceId -> NG.Index InstanceId)
-delete i fs c = NG.apply (NG.remove (record fs) c i)
+    -> NG.IndexAction InstanceId
+delete i fs c = NG.remove (record fs) c i
 
 -- | Key for record
 recordKey :: ModelName -> InstanceId -> B.ByteString
@@ -93,7 +124,14 @@ getRecord mname i fs =
 
 -- | Modify index with action
 modifyIndex
-    :: MVar (NG.Index InstanceId)
-    -> (NG.Index InstanceId -> NG.Index InstanceId)
+    :: MVar (Index InstanceId)
+    -> (NG.IndexAction InstanceId)
     -> Redis ()
-modifyIndex mvar act = liftIO $ modifyMVar_ mvar (return . act)
+modifyIndex mvar act = liftIO $ modifyMVar_ mvar (return . apply act)
+
+-- | Initialize index
+initializeIndex
+    :: MVar (Index InstanceId)
+    -> (NG.Index InstanceId)
+    -> Redis ()
+initializeIndex mvar ix = liftIO $ modifyMVar_ mvar (return . initialize ix)

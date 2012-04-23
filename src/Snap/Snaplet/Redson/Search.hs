@@ -40,7 +40,8 @@ import Database.Redis
 import Snap.Snaplet.Redson.Snapless.CRUD
 import Snap.Snaplet.Redson.Snapless.Metamodel
 
-import qualified Text.Search.NGram as NGram
+import qualified Snap.Snaplet.Redson.Search.NGram as NGram
+import qualified Text.Search.NGram as NG
 
 ------------------------------------------------------------------------------
 -- | A function which fill build Redis key pattern for certain way of
@@ -118,8 +119,8 @@ redisIndex mVar mFull mName fNames = do
                 decode' = T.unpack . E.decodeUtf8
                 values = map decode' $ filter (not . B.null) $ catMaybes fVals
                 i' = C8.pack $ show i
-            return $ map (\v -> NGram.value (NGram.ngram 3) v i') values)
-        void $ liftIO $ modifyMVar_ mVar $ (return . mappend strIds)
+            return $ map (\v -> NG.value (NG.ngram 3) v i') values)
+        NGram.initializeIndex mVar strIds
 
 -- | Search for term, return list of matching instances
 redisSearch'
@@ -130,16 +131,16 @@ redisSearch'
     -> Redis [[InstanceId]]
 
 redisSearch' mVar mName fNames term = do
-    ix <- liftIO $ readMVar mVar
+    ix <- fmap NGram.searched $ liftIO $ readMVar mVar
     let
         term' = T.unpack $ E.decodeUtf8 term
-        matches = map fst $ NGram.search ix (NGram.ngram 3) term'
+        matches = map fst $ NG.search ix (NG.ngram 3) term'
         mName' = C8.unpack mName
         modelId i = C8.pack $ mName' ++ ":" ++ C8.unpack i
     preciseMatches <- catMaybes <$> (forM matches $ \m -> do
         Right matched <- hmget (modelId m) fNames
         let matchFields = map (T.unpack . E.decodeUtf8) (catMaybes matched)
-        return $ if NGram.matchPrecise matchFields term'
+        return $ if NG.matchPrecise matchFields term'
             then Just m
             else Nothing)
     return [preciseMatches]
