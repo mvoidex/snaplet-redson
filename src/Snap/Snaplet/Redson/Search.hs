@@ -123,20 +123,20 @@ redisIndex mVar mName fNames = do
 redisSearch'
     :: MVar (NGram.Index InstanceId)
     -> ModelName
+    -> [FieldName]
     -> B.ByteString
     -> Redis [[InstanceId]]
 
-redisSearch' mVar mName term = do
+redisSearch' mVar mName fNames term = do
     ix <- liftIO $ readMVar mVar
     let
         term' = T.unpack $ E.decodeUtf8 term
         matches = map fst $ NGram.search ix (NGram.ngram 3) term'
         mName' = C8.unpack mName
-    liftIO $ putStrLn $ "Searching for: " ++ term'
+        modelId i = C8.pack $ mName' ++ ":" ++ C8.unpack i
     preciseMatches <- catMaybes <$> (forM matches $ \m -> do
-        Right matched <- hvals $ C8.pack $ mName' ++ ":" ++ (C8.unpack m)
-        let matchFields = map (T.unpack . E.decodeUtf8) matched
-        liftIO $ putStrLn $ "  Testing match: " ++ show matchFields
+        Right matched <- hmget (modelId m) fNames
+        let matchFields = map (T.unpack . E.decodeUtf8) (catMaybes matched)
         return $ if NGram.matchPrecise matchFields term'
             then Just m
             else Nothing)

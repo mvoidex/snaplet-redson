@@ -425,7 +425,7 @@ search =
               isVar <- gets indexSearch
               termIds <- runRedisDB database $ do
                   redisIndex isVar mname (map fst $ indices m)
-                  redisSearch' isVar mname query
+                  redisSearch' isVar mname (map fst $ indices m) query
 
               -- Produce Just SearchTerm
               let collate c = if c then CRUD.collate else Prelude.id
