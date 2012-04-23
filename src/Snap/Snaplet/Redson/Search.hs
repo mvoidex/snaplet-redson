@@ -28,6 +28,9 @@ import Control.Concurrent.MVar
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
 
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as E
+
 import Data.Maybe (catMaybes)
 
 import Data.Monoid (mconcat)
@@ -110,7 +113,8 @@ redisIndex mVar mName fNames = do
         strIds <- (mconcat . concat) <$> (forM [1..maxId] $ \i -> do
             Right fVals <- hmget (C8.pack $ mName' ++ ":" ++ show i) fNames
             let
-                values = map (C8.unpack) $ filter (not . B.null) $ catMaybes fVals
+                decode' = T.unpack . E.decodeUtf8
+                values = map decode' $ filter (not . B.null) $ catMaybes fVals
                 i' = C8.pack $ show i
             return $ map (\v -> NGram.value (NGram.ngram 3) v i') values)
         void $ liftIO $ putMVar mVar $ strIds
@@ -118,9 +122,22 @@ redisIndex mVar mName fNames = do
 -- | Search for term, return list of matching instances
 redisSearch'
     :: MVar (NGram.Index InstanceId)
+    -> ModelName
     -> B.ByteString
     -> Redis [[InstanceId]]
 
-redisSearch' mVar term = do
+redisSearch' mVar mName term = do
     ix <- liftIO $ readMVar mVar
-    return [map fst (NGram.search ix (NGram.ngram 3) (C8.unpack term))]
+    let
+        term' = T.unpack $ E.decodeUtf8 term
+        matches = map fst $ NGram.search ix (NGram.ngram 3) term'
+        mName' = C8.unpack mName
+    liftIO $ putStrLn $ "Searching for: " ++ term'
+    preciseMatches <- catMaybes <$> (forM matches $ \m -> do
+        Right matched <- hvals $ C8.pack $ mName' ++ ":" ++ (C8.unpack m)
+        let matchFields = map (T.unpack . E.decodeUtf8) matched
+        liftIO $ putStrLn $ "  Testing match: " ++ show matchFields
+        return $ if NGram.matchPrecise matchFields term'
+            then Just m
+            else Nothing)
+    return [preciseMatches]
