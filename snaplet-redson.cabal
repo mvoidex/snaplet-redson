@@ -56,7 +56,8 @@ library
                         Snap.Snaplet.Redson.Snapless.Metamodel.Loader,
                         Snap.Snaplet.Redson.Util
   other-modules:        Snap.Snaplet.Redson.Permissions,
-                        Snap.Snaplet.Redson.Search
+                        Snap.Snaplet.Redson.Search,
+                        Snap.Snaplet.Redson.Search.NGram
 
   build-depends:        
     aeson               == 0.6.*,

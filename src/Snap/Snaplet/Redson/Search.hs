@@ -33,7 +33,7 @@ import qualified Data.Text.Encoding as E
 
 import Data.Maybe (catMaybes)
 
-import Data.Monoid (mconcat)
+import Data.Monoid
 
 import Database.Redis
 
@@ -98,16 +98,18 @@ redisSearch model searchTerms patFunction =
 redisIndex
     :: MVar (NGram.Index InstanceId)
     -- ^ Index to fill
+    -> MVar Bool
+    -- ^ Is index created
     -> ModelName
     -- ^ Name of model
     -> [FieldName]
     -- ^ Fields to index
     -> Redis ()
 
-redisIndex mVar mName fNames = do
+redisIndex mVar mFull mName fNames = do
     let mName' = C8.unpack mName
-    emptyIx <- liftIO $ isEmptyMVar mVar
-    when emptyIx $ do
+    createdIx <- liftIO $ swapMVar mFull True
+    when (not createdIx) $ do
         Right ([Just maxIdStr]) <- mget [C8.pack $ "global:" ++ mName' ++ ":id"]
         let maxId = read $ C8.unpack maxIdStr
         strIds <- (mconcat . concat) <$> (forM [1..maxId] $ \i -> do
@@ -117,7 +119,7 @@ redisIndex mVar mName fNames = do
                 values = map decode' $ filter (not . B.null) $ catMaybes fVals
                 i' = C8.pack $ show i
             return $ map (\v -> NGram.value (NGram.ngram 3) v i') values)
-        void $ liftIO $ putMVar mVar $ strIds
+        void $ liftIO $ modifyMVar_ mVar $ (return . mappend strIds)
 
 -- | Search for term, return list of matching instances
 redisSearch'

@@ -39,6 +39,7 @@ import Data.List (foldl1', intersect, union)
 import qualified Data.Map as M
 
 import Data.Maybe
+import Data.Monoid
 
 import Snap.Core
 import Snap.Snaplet
@@ -57,9 +58,10 @@ import Snap.Snaplet.Redson.Snapless.Metamodel
 import Snap.Snaplet.Redson.Snapless.Metamodel.Loader (loadModels)
 import Snap.Snaplet.Redson.Permissions
 import Snap.Snaplet.Redson.Search
+import qualified Snap.Snaplet.Redson.Search.NGram as NGram
 import Snap.Snaplet.Redson.Util
 
-import qualified Text.Search.NGram as NGram
+import qualified Text.Search.NGram as NG
 
 ------------------------------------------------------------------------------
 -- | Redson snaplet state type.
@@ -70,7 +72,8 @@ data Redson b = Redson
              , models :: M.Map ModelName Model
              , transparent :: Bool
              -- ^ Operate in transparent mode (not security checks).
-             , indexSearch :: MVar (NGram.Index CRUD.InstanceId)
+             , indexSearch :: MVar (NG.Index CRUD.InstanceId)
+             , indexCreated :: MVar Bool
              }
 
 makeLens ''Redson
@@ -196,6 +199,8 @@ jsonToCommit s =
     M.filterWithKey (const (/= "id"))
     <$> A.decode s
 
+-- | Try get indices or return empty list
+maybeIndices = maybe [] indices
 
 ------------------------------------------------------------------------------
 -- | Handle instance creation request
@@ -213,8 +218,12 @@ post = ifTop $ do
              handleError forbidden
 
         mname <- getModelName
-        Right newId <- runRedisDB database $
-           CRUD.create mname commit (maybe [] indices mdl)
+        ix <- gets indexSearch
+        newId <- runRedisDB database $ do
+           Right i <- CRUD.create mname commit (maybeIndices mdl)
+           NGram.modifyIndex ix $ NGram.create i (maybeIndices mdl) commit
+           return i
+             
 
         ps <- gets events
         liftIO $ PS.publish ps $ creationMessage mname newId
@@ -263,9 +272,12 @@ put = ifTop $ do
              handleError forbidden
 
         id <- getModelId
+        ix <- gets indexSearch
         mname <- getModelName        
-        Right _ <- runRedisDB database $ 
-           CRUD.update mname id j (maybe [] indices mdl)
+        runRedisDB database $ do
+           Right old <- NGram.getRecord mname id (maybeIndices mdl)
+           Right _ <- CRUD.update mname id j (maybeIndices mdl)
+           NGram.modifyIndex ix $ NGram.update id (maybeIndices mdl) old j
         modifyResponse $ setResponseCode 204
 
 
@@ -289,7 +301,12 @@ delete = ifTop $ do
     when (null r) $
          handleError notFound
 
-    runRedisDB database $ CRUD.delete mname id (maybe [] indices mdl)
+    ix <- gets indexSearch
+
+    runRedisDB database $ do
+        Right c <- NGram.getRecord mname id (maybeIndices mdl)
+        CRUD.delete mname id (maybeIndices mdl)
+        NGram.modifyIndex ix $ NGram.delete id (maybeIndices mdl) c
 
     modifyResponse $ setContentType "application/json"
     writeLBS (commitToJson (M.fromList r))
@@ -422,10 +439,11 @@ search =
 
               query       <- fromMaybe "" <$> getParam "q"
 
-              isVar <- gets indexSearch
+              ifull <- gets indexCreated
+              ix <- gets indexSearch
               termIds <- runRedisDB database $ do
-                  redisIndex isVar mname (map fst $ indices m)
-                  redisSearch' isVar mname (map fst $ indices m) query
+                  redisIndex ix ifull mname (map fst $ indices m)
+                  redisSearch' ix mname (map fst $ indices m) query
 
               -- Produce Just SearchTerm
               let collate c = if c then CRUD.collate else Prelude.id
@@ -504,6 +522,7 @@ redsonInit topAuth = makeSnaplet
                                     cfg "field-groups-file"
 
             mdls <- liftIO $ loadModels mdlDir grpDef
-            ngram <- liftIO $ newEmptyMVar
+            ngram <- liftIO $ newMVar mempty
+            icreated <- liftIO $ newMVar False
             addRoutes routes
-            return $ Redson r topAuth p mdls transp ngram
+            return $ Redson r topAuth p mdls transp ngram icreated
