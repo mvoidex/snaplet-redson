@@ -59,9 +59,11 @@ instance Ord a => Monoid (Index a) where
     (Initialized l) `mappend` (Initialized r) = Initialized (l `mappend` r)
 
 -- | Apply index action
+-- When index is initializing, new actions must append at left as new.
+-- Initialized index may be changed directry
 apply :: Ord a => NG.IndexAction a -> Index a -> Index a
-apply act (Uninitialized v) = Uninitialized (v `mappend` act)
-apply act (Initialized v) = Initialized $ NG.apply act v
+apply act (Uninitialized f) = Uninitialized (act `mappend` f) -- act . f
+apply act (Initialized v) = Initialized $ NG.apply act v -- act v
 
 -- | Initialize index
 initialize :: Ord a => NG.Index a -> Index a -> Index a
