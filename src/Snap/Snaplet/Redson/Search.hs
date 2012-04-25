@@ -112,7 +112,7 @@ redisIndex mVar mFull mName fNames = do
     createdIx <- liftIO $ swapMVar mFull True
     when (not createdIx) $ do
         Right ([Just maxIdStr]) <- mget [C8.pack $ "global:" ++ mName' ++ ":id"]
-        let maxId = read $ C8.unpack maxIdStr
+        let maxId = Prelude.read $ C8.unpack maxIdStr
         strIds <- (mconcat . concat) <$> (forM [1..maxId] $ \i -> do
             Right fVals <- hmget (C8.pack $ mName' ++ ":" ++ show i) fNames
             let

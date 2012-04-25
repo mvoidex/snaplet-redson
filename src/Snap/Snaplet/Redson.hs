@@ -20,15 +20,11 @@ where
 import qualified Prelude (id)
 import Prelude hiding (concat, FilePath, id, read)
 
-<<<<<<< HEAD
 import Control.Arrow (second)
+import Control.Applicative
 import Control.Monad.State hiding (put)
 import Control.Concurrent.MVar
 import Data.Functor
-=======
-import Control.Applicative
-import Control.Monad.State hiding (put)
->>>>>>> upstream/master
 
 import Data.Aeson as A
 
@@ -185,28 +181,10 @@ deletionMessage = modelMessage "delete"
 commitToJson :: Commit -> LB.ByteString
 commitToJson = A.encode
 
-
-------------------------------------------------------------------------------
-<<<<<<< HEAD
--- | Decode B.ByteString with JSON to map of hash keys & values for
--- Redis HMSET (still to be `toList`-ed).
---
--- Return Nothing if parsing failed.
---
--- Note that if JSON object contains `null` values, conversion will
--- fail.
-jsonToCommit :: LB.ByteString -> Maybe Commit
-jsonToCommit s =
-    -- Omit fields with null values and "id" key
-    M.filterWithKey (const (/= "id"))
-    <$> A.decode s
-
 -- | Try get indices or return empty list
 maybeIndices = maybe [] indices
 
 ------------------------------------------------------------------------------
-=======
->>>>>>> upstream/master
 -- | Handle instance creation request
 --
 -- *TODO*: Use readRequestBody
@@ -274,12 +252,8 @@ put = ifTop $ do
         when (not $ checkWrite au mdl j) $
              handleError forbidden
 
-<<<<<<< HEAD
-        id <- getModelId
-        ix <- gets indexSearch
-=======
         id <- getInstanceId
->>>>>>> upstream/master
+        ix <- gets indexSearch
         mname <- getModelName        
         runRedisDB database $ do
            Right old <- NGram.getRecord mname id (maybeIndices mdl)
@@ -478,14 +452,6 @@ search =
                         _ -> writeLBS $ A.encode $
                              map (`CRUD.onlyFields` outFields) instances
 
-<<<<<<< HEAD
-=======
-
-mapSnd :: (b -> c) -> (a, b) -> (a, c)
-mapSnd f (a, b) = (a, f b)
-
-
->>>>>>> upstream/master
 -----------------------------------------------------------------------------
 -- | CRUD routes for models.
 routes :: [(B.ByteString, Handler b (Redson b) ())]
