@@ -117,7 +117,7 @@ instance FromJSON Model where
         v .:? "canUpdate" .!= Nobody      <*>
         v .:? "canDelete" .!= Nobody      <*>
         pure []
-    parseJSON _          = error "Could not parse model description"
+    parseJSON e          = error $ "Could not parse model description: " ++ show e
 
 instance ToJSON Model where
     toJSON mdl = object
@@ -133,10 +133,12 @@ instance ToJSON Model where
 
 
 instance FromJSON Permissions where
-    parseJSON (Bool True)  = return Everyone
-    parseJSON (Bool False) = return Nobody
-    parseJSON v@(Array _)  = Roles <$> parseJSON v
-    parseJSON _            = error "Could not permissions"
+    parseJSON (Bool True)       = return Everyone
+    parseJSON (Bool False)      = return Nobody
+    parseJSON (String "true")   = return Everyone
+    parseJSON (String "false")  = return Nobody
+    parseJSON v@(Array _)       = Roles <$> parseJSON v
+    parseJSON e                 = error $ "Could not parse permissions: " ++ show e
 
 instance ToJSON Permissions where
     toJSON Everyone  = Bool True
@@ -154,7 +156,7 @@ instance FromJSON Field where
       v .:? "meta"                      <*>
       v .:? "canRead"  .!= Nobody       <*>
       v .:? "canWrite" .!= Nobody
-    parseJSON _          = error "Could not parse field properties"
+    parseJSON e          = error $ "Could not parse field properties: " ++ show e
 
 instance ToJSON Field where
     toJSON f = object
@@ -170,10 +172,12 @@ instance ToJSON Field where
 
 
 instance FromJSON FieldTargets where
-    parseJSON (Bool True)  = return AllFields
-    parseJSON (Bool False) = return NoneFields
-    parseJSON v@(Array _)  = Fields <$> parseJSON v
-    parseJSON _            = error "Could not application targets"
+    parseJSON (Bool True)       = return AllFields
+    parseJSON (Bool False)      = return NoneFields
+    parseJSON (String "true")   = return AllFields
+    parseJSON (String "false")  = return NoneFields
+    parseJSON v@(Array _)       = Fields <$> parseJSON v
+    parseJSON e                 = error $ "Could not parse application targets: " ++ show e
 
 
 instance FromJSON Application where
@@ -182,7 +186,7 @@ instance FromJSON Application where
       v .:? "meta"                      <*>
       v .:? "canRead"                   <*>
       v .:? "canWrite"
-    parseJSON _          = error "Could not parse application entry"
+    parseJSON e          = error $ "Could not parse application entry" ++ show e
 
 
 -- | A named group of fields.

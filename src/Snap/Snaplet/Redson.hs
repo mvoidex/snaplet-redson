@@ -24,6 +24,7 @@ import Control.Arrow (second)
 import Control.Applicative
 import Control.Monad.State hiding (put)
 import Control.Concurrent.MVar
+import Control.Exception (catch, SomeException)
 import Data.Functor
 
 import Data.Aeson as A
@@ -502,7 +503,7 @@ redsonInit topAuth = makeSnaplet
             grpDef <- liftIO $
                       lookupDefault "resources/field-groups.json"
                                     cfg "field-groups-file"
-
+            
             mdls <- liftIO $ loadModels mdlDir grpDef
             ngram <- liftIO $ newMVar mempty
             icreated <- liftIO $ newMVar False
